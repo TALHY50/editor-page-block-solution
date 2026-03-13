@@ -64,8 +64,7 @@ const Editor: React.FC = () => {
 <style>
   /* ── Our layout styles (come first as defaults) ── */
   * { box-sizing: border-box; }
-  html { background: #c8c8c8 !important; padding: 32px 0; min-height: 100%; scrollbar-width: none; }
-  html::-webkit-scrollbar { display: none; }
+  html { background: #c8c8c8 !important; padding: 32px 0; min-height: 100%; }
   body {
     width: 794px !important; margin: 0 auto !important;
     background: transparent !important;
@@ -97,11 +96,9 @@ const Editor: React.FC = () => {
   }
   .doc-page table td,
   .doc-page table th {
-    border: 1px solid #d1d5db; /* Lighter grey border */
-    padding: 6px 8px; /* Slightly shifted for better alignment */
+    border: 1px solid #000;
+    padding: 4px 6px;
     vertical-align: top;
-    text-align: left;
-    color: #4b5563; /* Soft dark grey text instead of heavy black */
   }
   /* Let API CSS override our table defaults if it has its own styles */
   [style*="background:yellow"], [style*="background: yellow"] { background: #ffff00 !important; }
