@@ -64,7 +64,8 @@ const Editor: React.FC = () => {
 <style>
   /* ── Our layout styles (come first as defaults) ── */
   * { box-sizing: border-box; }
-  html { background: #c8c8c8 !important; padding: 32px 0; min-height: 100%; }
+  html { background: #c8c8c8 !important; padding: 32px 0; min-height: 100%; scrollbar-width: none; }
+  html::-webkit-scrollbar { display: none; }
   body {
     width: 794px !important; margin: 0 auto !important;
     background: transparent !important;
@@ -96,9 +97,11 @@ const Editor: React.FC = () => {
   }
   .doc-page table td,
   .doc-page table th {
-    border: 1px solid #000;
-    padding: 4px 6px;
+    border: 1px solid #d1d5db; /* Lighter grey border */
+    padding: 6px 8px; /* Slightly shifted for better alignment */
     vertical-align: top;
+    text-align: left;
+    color: #4b5563; /* Soft dark grey text instead of heavy black */
   }
   /* Let API CSS override our table defaults if it has its own styles */
   [style*="background:yellow"], [style*="background: yellow"] { background: #ffff00 !important; }
@@ -285,6 +288,7 @@ ${bodyHtml}
 
       var badge = document.createElement('span');
       badge.className = 'doc-page-num';
+      badge.setAttribute('contenteditable', 'false');
       badge.textContent = String(pNum);
       page.appendChild(badge);
       document.body.appendChild(page);
@@ -295,6 +299,7 @@ ${bodyHtml}
     /* ══ STEP 6: Reveal + real-time overflow monitoring ══ */
     document.body.style.visibility = '';
     document.body.contentEditable = 'true';
+    try { document.execCommand('styleWithCSS', false, true); } catch(e) {}
     document.body.focus();
 
     function nh() {
@@ -352,6 +357,7 @@ ${bodyHtml}
                     nextPageS.setAttribute('contenteditable', 'true');
                     var nbS = document.createElement('span');
                     nbS.className = 'doc-page-num';
+                    nbS.setAttribute('contenteditable', 'false');
                     nextPageS.appendChild(nbS);
                     page.parentNode.insertBefore(nextPageS, page.nextSibling);
                     pages.splice(pi + 1, 0, nextPageS);
@@ -401,13 +407,21 @@ ${bodyHtml}
             nextPage.setAttribute('contenteditable', 'true');
             var nb = document.createElement('span');
             nb.className = 'doc-page-num';
+            nb.setAttribute('contenteditable', 'false');
             nextPage.appendChild(nb);
             page.parentNode.insertBefore(nextPage, page.nextSibling);
             pages.splice(pi + 1, 0, nextPage);
           }
 
-          var nextBadge = nextPage.querySelector('.doc-page-num');
-          nextPage.insertBefore(overflow, nextBadge);
+          var nextKids = Array.from(nextPage.childNodes).filter(function(n) { return n.className !== 'doc-page-num'; });
+          if (nextKids.length > 0) {
+            nextPage.insertBefore(overflow, nextKids[0]);
+          } else {
+            var nextBadge = nextPage.querySelector('.doc-page-num');
+            if (nextBadge) nextPage.insertBefore(overflow, nextBadge);
+            else nextPage.appendChild(overflow);
+          }
+          
           changed = true;
           rebalancedOverflow = true;
           if (cursorInOverflow) movedCursorEl = overflow;
@@ -458,7 +472,6 @@ ${bodyHtml}
                   var isSplitTableStraddling = firstNext.tagName === 'TABLE' && 
                       lastKid && lastKid.tagName === 'TABLE' &&
                       firstNext.dataset.splitId && firstNext.dataset.splitId === lastKid.dataset.splitId;
-
                   if (isSplitTableStraddling) {
                       var dataRows = Array.from(firstNext.rows).filter(r => r.parentNode.tagName !== 'THEAD');
                       var firstRow = dataRows[0];
@@ -508,10 +521,16 @@ ${bodyHtml}
         if (kids2.length === 0) p.parentNode.removeChild(p);
       });
 
-      /* Update page numbers */
+      /* Update page numbers and auto-restore if accidentally deleted */
       document.querySelectorAll('.doc-page').forEach(function (p, idx) {
         var badge = p.querySelector('.doc-page-num');
-        if (badge) badge.textContent = String(idx + 1);
+        if (!badge) {
+          badge = document.createElement('span');
+          badge.className = 'doc-page-num';
+          badge.setAttribute('contenteditable', 'false');
+          p.appendChild(badge);
+        }
+        badge.textContent = String(idx + 1);
       });
 
       /* Restore cursor in moved element */
@@ -522,7 +541,7 @@ ${bodyHtml}
           range.collapse(true);
           sel.removeAllRanges();
           sel.addRange(range);
-          movedCursorEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          movedCursorEl.scrollIntoView({ block: 'nearest', behavior: 'auto' });
         } catch (e) {
           // fallback: just focus the moved element
           if (movedCursorEl.focus) movedCursorEl.focus();
@@ -532,92 +551,51 @@ ${bodyHtml}
       if (changed) nh();
     }
 
-    /* ── Enter at page end → new line on next page top ── */
-    document.addEventListener('keydown', function (e) {
-      if (e.key !== 'Enter') return;
+    /* ── Fix Hanging Indent on Enter ── */
+    /* When hitting Enter in a numbered list (or hanging indent block), 
+       Chrome clones the negative text-indent causing the new block to jump left.
+       We intercept this and reset the text-indent of the newly created block. */
+    var lastEnterBlock = null;
+    var BLOCK_TAGS = /^(P|H[1-6]|TABLE|UL|OL|LI|BLOCKQUOTE|PRE|HR|FIGURE|IMG|DIV)$/i;
+    
+    function getEnclosingBlock(node) {
+       var walk = node.nodeType === 1 ? node : node.parentElement;
+       while (walk && walk.tagName) {
+          if (walk.classList && walk.classList.contains('doc-page')) return null;
+          if (BLOCK_TAGS.test(walk.tagName)) return walk;
+          walk = walk.parentElement;
+       }
+       return null;
+    }
 
-      var sel = window.getSelection();
-      if (!sel || !sel.rangeCount) return;
-      var range = sel.getRangeAt(0);
+    document.addEventListener('keydown', function(e) {
+       if (e.key === 'Enter' && !e.shiftKey) {
+          var sel = window.getSelection();
+          if (sel && sel.rangeCount) {
+             lastEnterBlock = getEnclosingBlock(sel.getRangeAt(0).startContainer);
+          }
+       }
+    });
 
-      // Find which .doc-page cursor is in
-      var curPage = null;
-      var node = range.startContainer;
-      var walk = (node.nodeType === 1) ? node : node.parentElement;
-      while (walk) {
-        if (walk.classList && walk.classList.contains('doc-page')) { curPage = walk; break; }
-        walk = walk.parentElement;
-      }
-      if (!curPage) return;
-
-      // How far is cursor from the bottom of this page?
-      var pageRect = curPage.getBoundingClientRect();
-      var cursorY  = range.getBoundingClientRect().bottom;
-      var bottomPad = 48 + 14; // page padding + badge
-      var remain = (pageRect.bottom - bottomPad) - cursorY;
-
-      // If more than ~40px of usable space remains, let browser handle Enter normally
-      if (remain > 40) return;
-
-      // ── Page is full: intercept Enter ──
-      e.preventDefault();
-
-      // Find or create next page
-      var allPages = Array.from(document.querySelectorAll('.doc-page'));
-      var idx = allPages.indexOf(curPage);
-      var nextPage = allPages[idx + 1];
-
-      if (!nextPage) {
-        nextPage = document.createElement('div');
-        nextPage.className = 'doc-page';
-        nextPage.setAttribute('contenteditable', 'true');
-        var nb = document.createElement('span');
-        nb.className = 'doc-page-num';
-        nextPage.appendChild(nb);
-        curPage.parentNode.insertBefore(nextPage, curPage.nextSibling);
-      }
-
-      // Insert empty <p> at top of next page (before existing content + badge)
-      var newP = document.createElement('p');
-      var br = document.createElement('br');
-      newP.appendChild(br); // visible empty line
-      // Insert as first child (before all existing content)
-      var firstChild = nextPage.firstChild;
-      // But find the first non-badge child to insert before
-      var insertBefore = null;
-      var ch = nextPage.firstChild;
-      while (ch) {
-        if (ch.nodeType === 1 && ch.className === 'doc-page-num') {
-          ch = ch.nextSibling;
-          continue;
-        }
-        insertBefore = ch;
-        break;
-      }
-      if (insertBefore) {
-        nextPage.insertBefore(newP, insertBefore);
-      } else {
-        var badge = nextPage.querySelector('.doc-page-num');
-        if (badge) nextPage.insertBefore(newP, badge);
-        else nextPage.appendChild(newP);
-      }
-
-      // Move cursor into the new paragraph
-      var r2 = document.createRange();
-      r2.setStart(newP, 0);
-      r2.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(r2);
-
-      // Scroll to show the next page
-      newP.scrollIntoView({ block: 'start', behavior: 'smooth' });
-
-      // Update page numbers
-      document.querySelectorAll('.doc-page').forEach(function (p, i) {
-        var b = p.querySelector('.doc-page-num');
-        if (b) b.textContent = String(i + 1);
-      });
-      nh();
+    document.addEventListener('keyup', function(e) {
+       if (e.key === 'Enter' && !e.shiftKey && lastEnterBlock) {
+          setTimeout(function() {
+             var sel = window.getSelection();
+             if (sel && sel.rangeCount) {
+                var currentBlock = getEnclosingBlock(sel.getRangeAt(0).startContainer);
+                if (currentBlock && currentBlock !== lastEnterBlock) {
+                   var ti = parseFloat(window.getComputedStyle(currentBlock).textIndent) || 0;
+                   if (ti < 0) {
+                      currentBlock.style.textIndent = '0px';
+                   }
+                }
+             }
+             lastEnterBlock = null;
+             rebalancePages();
+          }, 0);
+       } else if (e.key === 'Enter') {
+          setTimeout(rebalancePages, 0);
+       }
     });
 
     /* Run rebalance on input, and run a few times on load to catch slow fonts/styles */
